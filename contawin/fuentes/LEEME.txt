@@ -1,0 +1,2 @@
+Copie aquí los archivos .ttf de IBM Plex Sans e IBM Plex Mono (opcional).
+Si esta carpeta no tiene fuentes, ContaWin usa Segoe UI y Consolas.
