@@ -120,36 +120,6 @@ class TestContabilidad(unittest.TestCase):
         self.assertEqual(textos[0][-1], "500.000 D")   # arrastre de enero
         self.assertEqual(textos[-1][-1], "381.000 D")  # saldo final
 
-    def test_apertura_nuevo_ano(self):
-        self._asientos()
-        self.db.guardar_cuenta(self.emp, "220101", "RESULTADOS ACUMULADOS", 0, True)
-        # sin cuenta para el resultado no se crea el año
-        with self.assertRaises(ErrorDatos):
-            self.db.crear_periodo_con_apertura(self.emp, 2027, self.per)
-        self.assertEqual([p["ano"] for p in self.db.periodos(self.emp)], [2026])
-        self.assertEqual(self.db.cuenta_resultado_sugerida(self.emp), "220101")
-
-        p27 = self.db.crear_periodo_con_apertura(self.emp, 2027, self.per, "220101")
-        (a,) = self.db.asientos(p27)
-        self.assertEqual((a["numero"], a["tipo"], a["fecha"]), (1, "T", "2027-01-01"))
-        lineas = {l["codigo"]: (l["debe"], l["haber"]) for l in self.db.detalle_asiento(a["id"])}
-        # Caja 381.000 deudor; utilidad 381.000 a resultados acumulados; cuentas 3 y 4 cerradas
-        self.assertEqual(lineas, {"110101": (381000, 0), "220101": (0, 381000)})
-
-        # corregir 2026 y regenerar: reemplaza el mismo asiento, no crea otro
-        self.db.guardar_asiento(self.per, {"tipo": "T", "fecha": "2026-12-31", "glosa": "deposito"}, [
-            {"codigo": "110201", "debe": 100000, "haber": 0}, {"codigo": "110101", "debe": 0, "haber": 100000}])
-        self.db.guardar_asiento(p27, {"tipo": "I", "fecha": "2027-01-05", "glosa": "venta"}, [
-            {"codigo": "110101", "debe": 1000, "haber": 0}, {"codigo": "410101", "debe": 0, "haber": 1000}])
-        aid = self.db.traspasar_apertura(self.per, p27, "220101")
-        self.assertEqual(aid, a["id"])
-        self.assertEqual([x["numero"] for x in self.db.asientos(p27)], [1, 2])
-        lineas = {l["codigo"]: (l["debe"], l["haber"]) for l in self.db.detalle_asiento(aid)}
-        self.assertEqual(lineas, {"110101": (281000, 0), "110201": (100000, 0), "220101": (0, 381000)})
-
-        with self.assertRaises(ErrorDatos):
-            self.db.traspasar_apertura(p27, self.per, "220101")      # al revés
-
     def test_usuarios(self):
         self.assertTrue(self.db.login("admin", "admin"))
         self.assertFalse(self.db.login("admin", "otra"))

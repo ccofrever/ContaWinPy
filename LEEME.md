@@ -81,6 +81,20 @@ en el asiento **Ctrl+S** = guardar.
 - Todos los informes se pueden ver en pantalla, imprimir, guardar en PDF o pasar a Excel.
 - *Útiles > Respaldar base de datos* guarda una copia de seguridad.
 
+## Asiento de apertura
+
+El asiento de apertura de cada año es el resultado del balance del año anterior
+(*Ingresos > Asiento de apertura…*; también se ofrece al crear un año nuevo):
+
+- Cuentas de balance (códigos 1 y 2): saldo deudor al Debe, saldo acreedor al Haber.
+- Cuentas de resultado (3 y 4): se cierran; su diferencia (utilidad o pérdida del ejercicio)
+  va a la cuenta de patrimonio que usted elija (utilidad al Haber, pérdida al Debe). La cuenta
+  elegida se recuerda para los años siguientes.
+- Se graba como comprobante N° 1 (si está libre), tipo Traspaso, fecha 01/01, glosa
+  «ASIENTO DE APERTURA aaaa (SALDOS AL 31-12-aaaa)». Si después se corrige el año anterior,
+  volver a generarla reemplaza el mismo asiento.
+- Al crear un año se puede elegir «Crear el año sin apertura».
+
 ## Apariencia (sistema de diseño ContaWin)
 
 La interfaz sigue el sistema de diseño **ContaWin**: fondo claro, petróleo (`brand`) solo para la

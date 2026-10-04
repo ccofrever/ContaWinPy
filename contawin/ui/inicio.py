@@ -182,12 +182,15 @@ class SeleccionAnoDialog(QDialog):
         ano, ok = QInputDialog.getInt(self, "Crear nuevo año", "Año de trabajo:", _dt.date.today().year, 1981, 2200)
         if not ok:
             return
+        # si hay año anterior con saldos, se ofrece el asiento de apertura (balance del año anterior)
+        from .apertura import crear_ano
         try:
-            pid = self.s.db.crear_periodo(self.empresa_id, ano)
+            pid = crear_ano(self, self.s.db, self.empresa_id, ano)
         except ErrorDatos as e:
             error(self, str(e))
             return
-        self._cargar(pid)
+        if pid:
+            self._cargar(pid)
 
     def _aceptar(self):
         pid = self.tabla.dato_actual()

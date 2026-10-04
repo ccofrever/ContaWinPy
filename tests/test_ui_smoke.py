@@ -328,6 +328,35 @@ class TestInterfaz(unittest.TestCase):
         win.respaldar()
         self.assertTrue(os.path.getsize(self.f.RESPUESTAS["file"]) > 0)
 
+        # --- asiento de apertura 2027 desde el balance 2026 (año ya creado: menú Ingresos)
+        p27 = self.db.q1("SELECT id FROM periodo WHERE empresa_id=? AND ano=2027", (self.s.empresa_id,))["id"]
+        from contawin.ui import apertura as ui_apertura
+        self.db.guardar_cuenta(self.s.empresa_id, "230101", "RESULTADOS ACUMULADOS", False, True)
+
+        def dlg_apertura(d):
+            d.cuenta.set_codigo("230101")
+            d._previa()
+            self.assertIn("Cuadrado", d.lbl_estado.text())
+            d._aceptar()
+        self.H("AperturaDialog", dlg_apertura)
+        self.assertTrue(ui_apertura.abrir(win, self.db, self.s.empresa_id, p27))
+        ap = self.db.asiento_apertura(p27)
+        self.assertEqual(ap["numero"], 1)
+        self.assertTrue(ap["glosa"].startswith("ASIENTO DE APERTURA 2027"))
+        # regenerar reemplaza el mismo asiento
+        self.assertTrue(ui_apertura.abrir(win, self.db, self.s.empresa_id, p27))
+        self.assertEqual(self.db.asiento_apertura(p27)["id"], ap["id"])
+
+        # --- año nuevo 2028 desde el diálogo de años: crea el año con su apertura
+        self.H("AperturaDialog", lambda d: d._aceptar())
+        p28 = ui_apertura.crear_ano(win, self.db, self.s.empresa_id, 2028)
+        self.assertEqual(self.db.asiento_apertura(p28)["numero"], 1)
+        # «Crear el año sin apertura»
+        self.H("AperturaDialog", lambda d: d._omitir())
+        p29 = ui_apertura.crear_ano(win, self.db, self.s.empresa_id, 2029)
+        self.assertIsNone(self.db.asiento_apertura(p29))
+        self.assertEqual(self.db.asientos(p29), [])
+
         # --- acciones del menú sin empresa -> pide seleccionar
         self.s.empresa = self.s.periodo = None
         self.H("SeleccionEmpresaDialog", lambda d: 0)

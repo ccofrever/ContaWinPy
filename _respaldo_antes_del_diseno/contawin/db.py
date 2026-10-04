@@ -292,9 +292,6 @@ class Database:
 
     def borrar_empresa(self, empresa_id: int):
         with self.transaccion() as c:
-            for p in c.execute("SELECT id FROM periodo WHERE empresa_id=?", (empresa_id,)).fetchall():
-                c.execute("DELETE FROM parametro WHERE clave=?", (f"apertura:{p['id']}",))
-            c.execute("DELETE FROM parametro WHERE clave=?", (f"cuenta_resultado:{empresa_id}",))
             c.execute("DELETE FROM empresa WHERE id=?", (empresa_id,))
 
     def resumen_empresa(self, empresa_id: int) -> dict:
@@ -317,102 +314,6 @@ class Database:
             raise ErrorDatos(f"El año {ano} ya existe para esta empresa.")
         with self.transaccion() as c:
             return c.execute("INSERT INTO periodo(empresa_id, ano) VALUES (?,?)", (empresa_id, ano)).lastrowid
-
-    def periodo_anterior(self, empresa_id: int, ano: int):
-        """Último año de la empresa anterior a `ano` (origen de los saldos de apertura)."""
-        return self.q1("SELECT * FROM periodo WHERE empresa_id=? AND ano<? ORDER BY ano DESC LIMIT 1",
-                       (empresa_id, ano))
-
-    # ------------------------------------------------------------------ apertura (traspaso de saldos)
-    def saldos_cierre(self, periodo_id: int) -> dict:
-        """Saldos finales del año para el asiento de apertura del siguiente.
-
-        Las cuentas de resultado (grupos 3 y 4) se cierran: su saldo neto es el resultado
-        del ejercicio (debe - haber: > 0 pérdida, < 0 utilidad). Las demás se traspasan.
-        Devuelve {"saldos": {codigo: debe-haber}, "resultado": int}.
-        """
-        saldos, resultado = {}, 0
-        for r in self.q("""SELECT d.codigo, SUM(d.debe) - SUM(d.haber) s FROM detalle d
-                           JOIN asiento a ON a.id=d.asiento_id WHERE a.periodo_id=?
-                           GROUP BY d.codigo ORDER BY d.codigo""", (periodo_id,)):
-            if not r["s"]:
-                continue
-            if r["codigo"][:1] in ("3", "4"):
-                resultado += r["s"]
-            else:
-                saldos[r["codigo"]] = r["s"]
-        return {"saldos": saldos, "resultado": resultado}
-
-    def lineas_apertura(self, periodo_origen_id: int, cuenta_resultado: str | None) -> list[dict]:
-        sc = self.saldos_cierre(periodo_origen_id)
-        saldos = dict(sc["saldos"])
-        if sc["resultado"]:
-            if not cuenta_resultado:
-                raise ErrorDatos("Debe indicar la cuenta de patrimonio donde se traspasa el resultado del ejercicio.")
-            saldos[cuenta_resultado] = saldos.get(cuenta_resultado, 0) + sc["resultado"]
-        return [{"codigo": c, "debe": s if s > 0 else 0, "haber": -s if s < 0 else 0}
-                for c, s in sorted(saldos.items()) if s]
-
-    def asiento_apertura(self, periodo_id: int):
-        """Asiento de apertura generado por el sistema para el año (o None)."""
-        r = self.q1("SELECT valor FROM parametro WHERE clave=?", (f"apertura:{periodo_id}",))
-        if not r:
-            return None
-        return self.q1("SELECT * FROM asiento WHERE id=? AND periodo_id=?", (int(r["valor"]), periodo_id))
-
-    def cuenta_resultado_sugerida(self, empresa_id: int) -> str | None:
-        r = self.q1("SELECT valor FROM parametro WHERE clave=?", (f"cuenta_resultado:{empresa_id}",))
-        if r and self.cuenta(empresa_id, r["valor"]):
-            return r["valor"]
-        for c in self.cuentas(empresa_id):
-            n = c["nombre"]
-            if c["codigo"][:1] not in ("3", "4") and ("RESULTADO" in n or "UTILIDAD" in n or "PERDIDA" in n):
-                return c["codigo"]
-        return None
-
-    def traspasar_apertura(self, periodo_origen_id: int, periodo_destino_id: int,
-                           cuenta_resultado: str | None = None) -> int:
-        """Genera (o regenera) el asiento de apertura del año destino con los saldos
-        al cierre del año origen. Si ya existe uno generado por el sistema, lo reemplaza."""
-        origen, destino = self.periodo(periodo_origen_id), self.periodo(periodo_destino_id)
-        if not origen or not destino or origen["empresa_id"] != destino["empresa_id"]:
-            raise ErrorDatos("Los años de origen y destino deben ser de la misma empresa.")
-        if origen["ano"] >= destino["ano"]:
-            raise ErrorDatos("El año de origen debe ser anterior al año de destino.")
-        empresa_id = destino["empresa_id"]
-        if cuenta_resultado and not self.cuenta(empresa_id, cuenta_resultado):
-            raise ErrorDatos(f"La cuenta {util.formato_codigo(cuenta_resultado)} no existe en el plan de cuentas.")
-        lineas = self.lineas_apertura(periodo_origen_id, cuenta_resultado)
-        if not lineas:
-            raise ErrorDatos(f"El año {origen['ano']} no tiene saldos que traspasar.")
-        cab = {"tipo": "T", "fecha": f"{destino['ano']}-01-01",
-               "glosa": f"ASIENTO DE APERTURA {destino['ano']} (SALDOS AL 31-12-{origen['ano']})"}
-        previo = self.asiento_apertura(periodo_destino_id)
-        if previo:
-            asiento_id = self.guardar_asiento(periodo_destino_id, cab, lineas, previo["id"])
-        else:
-            libre = not self.q1("SELECT 1 FROM asiento WHERE periodo_id=? AND numero=1", (periodo_destino_id,))
-            cab["numero"] = 1 if libre else self.siguiente_numero(periodo_destino_id)
-            asiento_id = self.guardar_asiento(periodo_destino_id, cab, lineas)
-        with self.transaccion() as c:
-            c.execute("INSERT OR REPLACE INTO parametro(clave, valor) VALUES (?,?)",
-                      (f"apertura:{periodo_destino_id}", str(asiento_id)))
-            if cuenta_resultado:
-                c.execute("INSERT OR REPLACE INTO parametro(clave, valor) VALUES (?,?)",
-                          (f"cuenta_resultado:{empresa_id}", cuenta_resultado))
-        return asiento_id
-
-    def crear_periodo_con_apertura(self, empresa_id: int, ano: int, periodo_origen_id: int,
-                                   cuenta_resultado: str | None = None) -> int:
-        """Crea el año y traspasa los saldos; si el traspaso falla, el año no queda creado."""
-        pid = self.crear_periodo(empresa_id, ano)
-        try:
-            self.traspasar_apertura(periodo_origen_id, pid, cuenta_resultado)
-        except Exception:
-            with self.transaccion() as c:
-                c.execute("DELETE FROM periodo WHERE id=?", (pid,))
-            raise
-        return pid
 
     # ------------------------------------------------------------------ cuentas
     def cuentas(self, empresa_id: int, orden: str = "codigo"):
@@ -608,7 +509,6 @@ class Database:
     def borrar_asiento(self, asiento_id: int):
         with self.transaccion() as c:
             c.execute("DELETE FROM asiento WHERE id=?", (asiento_id,))
-            c.execute("DELETE FROM parametro WHERE clave LIKE 'apertura:%' AND valor=?", (str(asiento_id),))
 
     # ------------------------------------------------------------------ consultas para informes
     def movimientos(self, periodo_id: int, codigo: str | None = None, desde=None, hasta=None):

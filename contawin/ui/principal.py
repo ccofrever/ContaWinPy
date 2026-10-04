@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame, QGrid
 from .. import APP_NAME, __version__, importer, util
 from ..config import Config, carpeta_programa
 from ..db import nombre_respaldo
-from . import asientos, informes_dlg, mantenedores, tema
+from . import apertura, asientos, informes_dlg, mantenedores, tema
 from .comunes import Sesion, Tabla, confirmar, error, info
 from .inicio import SeleccionEmpresaDialog
 
@@ -79,6 +79,8 @@ class Principal(QMainWindow):
                        lambda: asientos.mantener_asientos(self, self.s), "F3", "Asientos contables del año")
         self.a_nuevo = A("&Nuevo comprobante", "mas", self.nuevo_comprobante, "Ctrl+N",
                          "Ingresa un comprobante contable")
+        self.a_ape = A("Asiento de a&pertura…", "importar", self.asiento_apertura, None,
+                       "Genera el asiento de apertura con los saldos del balance del año anterior")
         self.a_cta = A("&Plan de cuentas", "cuentas",
                        lambda: mantenedores.mantener_cuentas(self, self.s), "F4", "Mantención del plan de cuentas")
         self.a_pro = A("P&roveedores", "proveedor",
@@ -114,6 +116,7 @@ class Principal(QMainWindow):
         m = mb.addMenu("&Ingresos")
         m.addAction(self.a_nuevo)
         m.addAction(self.a_asi)
+        m.addAction(self.a_ape)
         m.addSeparator()
         for a in (self.a_cta, self.a_pro, self.a_cco):
             m.addAction(a)
@@ -187,11 +190,11 @@ class Principal(QMainWindow):
         self.b_inicio.clicked.connect(self._actualizar_estado)
         lay.addWidget(self.b_inicio)
 
-        secciones = [("Ingresos", [self.a_asi, self.a_cta, self.a_pro, self.a_cco]),
+        secciones = [("Ingresos", [self.a_asi, self.a_ape, self.a_cta, self.a_pro, self.a_cco]),
                      ("Informes", [self.a_b8, self.a_bti, self.a_ld, self.a_ldt, self.a_may]),
                      ("Compras", [self.a_lc]),
                      ("Utilidades", [self.a_emp, self.a_usu, self.a_imp, self.a_res])]
-        cortos = {id(self.a_imp): "Importar desde DBF", id(self.a_res): "Respaldar datos",
+        cortos = {id(self.a_imp): "Importar desde DBF", id(self.a_ape): "Asiento de apertura", id(self.a_res): "Respaldar datos",
                   id(self.a_ldt): "Diario por tipo", id(self.a_may): "Mayor"}
         for titulo, acciones in secciones:
             lay.addWidget(tema.etiqueta(titulo, "seccion"))
@@ -392,6 +395,9 @@ class Principal(QMainWindow):
         aid = self.tabla_ult.dato_actual()
         if aid is not None:
             self._ejecutar(lambda: asientos.AsientoEditor(self, self.s, aid).exec(), True)
+
+    def asiento_apertura(self):
+        apertura.abrir(self, self.s.db, self.s.empresa_id, self.s.periodo_id)
 
     def nuevo_comprobante(self):
         asientos.AsientoEditor(self, self.s).exec()
