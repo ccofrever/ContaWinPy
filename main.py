@@ -58,7 +58,7 @@ def main():
     tema.aplicar(app, cfg.tema)        # sistema de diseño ContaWin (claro / oscuro / automatico)
     db = Database(cfg.ruta_base)
     sesion = Sesion(db)
-    if not LoginDialog(sesion, cfg.titulo).exec():
+    if not LoginDialog(sesion, cfg.titulo, cfg.fondo_imagen).exec():
         return 0
     win = Principal(sesion, cfg)
     win.showMaximized()

@@ -93,6 +93,23 @@ class TestContabilidad(unittest.TestCase):
         self.assertEqual(b["resultado"]["pasivo"], 381000)
         self.assertEqual(b["resultado"]["perdida"], 381000)
 
+    def test_balance_tributario_sin_codigos(self):
+        self._asientos()
+        for borr, trib in [
+            (reports.balance_8_columnas(self.db, self.emp, self.per, "2026-01-01", "2026-12-31"),
+             reports.balance_8_columnas(self.db, self.emp, self.per, "2026-01-01", "2026-12-31", tributario=True)),
+            (reports.balance_tipo_informe(self.db, self.emp, self.per, "2026-12-31"),
+             reports.balance_tipo_informe(self.db, self.emp, self.per, "2026-12-31", tributario=True)),
+        ]:
+            codigos = {f.valores[0] for f in borr.filas if f.estilo == reports.NORMAL}
+            cuentas = [f for f in trib.filas if f.estilo == reports.NORMAL]
+            self.assertTrue(codigos)
+            self.assertEqual([f.valores[0] for f in cuentas], list(range(1, len(cuentas) + 1)))
+            textos = {t for f in trib.filas for t in trib.textos(f)}
+            self.assertFalse(textos & {borr.texto_celda(0, c) for c in codigos}, "no debe mostrar códigos")
+            # mismas cifras y nombres que el borrador
+            self.assertEqual([f.valores[1:] for f in borr.filas], [f.valores[1:] for f in trib.filas])
+
     def test_informes(self):
         self._asientos()
         a = self.db.asientos(self.per)[1]
@@ -103,6 +120,8 @@ class TestContabilidad(unittest.TestCase):
             reports.libro_mayor(self.db, self.emp, self.per, "2026-02-01", "2026-12-31"),
             reports.balance_8_columnas(self.db, self.emp, self.per, "2026-01-01", "2026-12-31"),
             reports.balance_tipo_informe(self.db, self.emp, self.per, "2026-12-31"),
+            reports.balance_8_columnas(self.db, self.emp, self.per, "2026-01-01", "2026-12-31", tributario=True),
+            reports.balance_tipo_informe(self.db, self.emp, self.per, "2026-12-31", tributario=True),
             reports.libro_compras(self.db, self.emp, self.per, "2026-01-01", "2026-12-31"),
             reports.listado_empresas(self.db), reports.listado_cuentas(self.db, self.emp),
             reports.listado_ccostos(self.db, self.emp), reports.listado_proveedores(self.db, self.emp),

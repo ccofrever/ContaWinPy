@@ -228,6 +228,14 @@ def libro_mayor(db: Database, empresa_id: int, periodo_id: int, desde, hasta,
 # ---------------------------------------------------------------------------
 # Balance de 8 columnas
 # ---------------------------------------------------------------------------
+def _columna_cuenta(tributario: bool, ancho: float, titulo_codigo: str) -> Columna:
+    """Balance tributario (para bancos u otros terceros): un correlativo en lugar del código de
+    cuenta, para no exponer el plan de cuentas. Borrador: el código, para el trabajo interno."""
+    if tributario:
+        return Columna("N°", ancho, "t", "R")
+    return Columna(titulo_codigo, ancho, "c")
+
+
 TEXTO_ART100 = [
     "Artículo 100 Código Tributario: Dejo constancia que la contabilidad de este ejercicio, así como el "
     "Inventario y Balance",
@@ -279,7 +287,8 @@ def calcular_balance_8(db: Database, empresa_id: int, periodo_id: int, desde, ha
     return dict(filas=filas, totales=dict(tot), resultado=res, es_ganancia=es_ganancia, sumas=sumas)
 
 
-def balance_8_columnas(db: Database, empresa_id: int, periodo_id: int, desde, hasta, emision=None) -> Informe:
+def balance_8_columnas(db: Database, empresa_id: int, periodo_id: int, desde, hasta, emision=None,
+                       tributario: bool = False) -> Informe:
     emp = db.empresa(empresa_id)
     b = calcular_balance_8(db, empresa_id, periodo_id, desde, hasta)
     claves = ["debitos", "creditos", "deudor", "acreedor", "activo", "pasivo", "perdida", "ganancia"]
@@ -291,14 +300,15 @@ def balance_8_columnas(db: Database, empresa_id: int, periodo_id: int, desde, ha
                         f"Giro      : {emp['giro']}",
                         "S A L D O S  (Deudor / Acreedor)  ·  I N V E N T A R I O  (Activo / Pasivo)  ·  "
                         "R E S U L T A D O  (Pérdida / Ganancia)"],
-        columnas=[Columna("CÓDIGO", 0.9, "c"), Columna("C U E N T A", 2.4)] +
+        columnas=[_columna_cuenta(tributario, 0.9, "CÓDIGO"), Columna("C U E N T A", 2.4)] +
                  [Columna(t, 1.15, "m") for t in ("DÉBITOS", "CRÉDITOS", "DEUDOR", "ACREEDOR", "ACTIVO",
                                                     "PASIVO", "PÉRDIDA", "GANANCIA")],
-        horizontal=True, fecha_emision=emision or _dt.date.today(), nombre_archivo="balance_8_columnas",
+        horizontal=True, fecha_emision=emision or _dt.date.today(),
+        nombre_archivo="balance_8_columnas_tributario" if tributario else "balance_8_columnas",
         pie=TEXTO_ART100, firmas=["CONTADOR", "CONTRIBUYENTE O REPRESENTANTE LEGAL"],
     )
-    for f in b["filas"]:
-        inf.filas.append(Fila([f["codigo"], f["nombre"]] + [f[k] for k in claves]))
+    for n, f in enumerate(b["filas"], 1):
+        inf.filas.append(Fila([n if tributario else f["codigo"], f["nombre"]] + [f[k] for k in claves]))
     t = b["totales"]
     inf.filas.append(Fila(["", "T O T A L E S"] + [t.get(k, 0) for k in claves], TOTAL))
     r = b["resultado"]
@@ -312,7 +322,8 @@ def balance_8_columnas(db: Database, empresa_id: int, periodo_id: int, desde, ha
 # ---------------------------------------------------------------------------
 # Balance tipo informe
 # ---------------------------------------------------------------------------
-def balance_tipo_informe(db: Database, empresa_id: int, periodo_id: int, hasta, emision=None) -> Informe:
+def balance_tipo_informe(db: Database, empresa_id: int, periodo_id: int, hasta, emision=None,
+                         tributario: bool = False) -> Informe:
     """Saldo de cada cuenta desde el inicio del año hasta la fecha, agrupado por
     el primer dígito del código. Grupo 1: Debe - Haber; resto: Haber - Debe."""
     emp = db.empresa(empresa_id)
@@ -322,11 +333,11 @@ def balance_tipo_informe(db: Database, empresa_id: int, periodo_id: int, hasta, 
     inf = Informe(
         titulo=f"BALANCE TIPO INFORME   HASTA EL < {util.fmt_fecha(hasta)} >", subtitulos=[emp["razon_social"]],
         membrete=_membrete(emp),
-        columnas=[Columna("Código", 1, "c"), Columna("Cuenta", 4), Columna("S a l d o", 1.6, "m"),
+        columnas=[_columna_cuenta(tributario, 1, "Código"), Columna("Cuenta", 4), Columna("S a l d o", 1.6, "m"),
                   Columna("SubTotal", 1.6, "m")],
-        fecha_emision=emision or _dt.date.today(), nombre_archivo="balance_tipo_informe",
+        fecha_emision=emision or _dt.date.today(), nombre_archivo="balance_tipo_informe_tributario" if tributario else "balance_tipo_informe",
     )
-    grupo_actual, sub, sub_tiene = None, 0, False
+    grupo_actual, sub, sub_tiene, n = None, 0, False, 0
     for c in db.cuentas(empresa_id):
         d, h = sums.get(c["codigo"], (0, 0))
         g = c["codigo"][:1]
@@ -336,7 +347,8 @@ def balance_tipo_informe(db: Database, empresa_id: int, periodo_id: int, hasta, 
             grupo_actual, sub, sub_tiene = g, 0, False
         total = (d - h) if g == "1" else (h - d)
         if total != 0:
-            inf.filas.append(Fila([c["codigo"], c["nombre"], total, ""]))
+            n += 1
+            inf.filas.append(Fila([n if tributario else c["codigo"], c["nombre"], total, ""]))
             sub += total
             sub_tiene = True
     if grupo_actual is not None and sub_tiene:

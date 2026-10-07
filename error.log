@@ -1,0 +1,7 @@
+
+===== 06/10/2026 19:42:30
+Traceback (most recent call last):
+  File "c:\ContaWinPy\contawin\ui\inicio.py", line 56, in paintEvent
+    def paintEvent(self, evento):
+    
+KeyboardInterrupt

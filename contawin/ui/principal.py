@@ -2,7 +2,7 @@
 
 Sigue el patrón «Ventana principal» del sistema de diseño ContaWin: barra lateral con los
 módulos (Ingresos, Informes, Compras, Utilidades), cabecera con empresa, período y usuario,
-y un tablero en el área de trabajo en lugar de la imagen decorativa.
+y un tablero en el área de trabajo sobre la imagen de fondo elegida (FONDO.BMP por omisión).
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame, QGrid
 from .. import APP_NAME, __version__, importer, util
 from ..config import Config, carpeta_programa
 from ..db import nombre_respaldo
-from . import apertura, asientos, informes_dlg, mantenedores, tema
+from . import apertura, asientos, fondo, informes_dlg, mantenedores, tema
 from .comunes import Sesion, Tabla, confirmar, error, info
 from .inicio import SeleccionEmpresaDialog
 
@@ -108,6 +108,8 @@ class Principal(QMainWindow):
                        None, "Trae empresas, cuentas, asientos y compras desde los archivos DBF", empresa=False)
         self.a_res = A("&Respaldar base de datos…", "respaldar", self.respaldar, None,
                        "Guarda una copia de seguridad de todos los datos", empresa=False)
+        self.a_fondo = A("Imagen de &fondo…", "imagen", self.elegir_fondo, None,
+                         "Elige la imagen del área de trabajo y su tamaño", empresa=False)
         self.a_acerca = A("Acerca &de ContaWin…", "info", self.acerca, None, empresa=False)
         self.a_salir = A("&Salir", "salir", self.close, "Alt+F4", "Salir del programa", empresa=False)
 
@@ -145,6 +147,7 @@ class Principal(QMainWindow):
             a.triggered.connect(lambda _=False, c=clave: self.cambiar_tema(c))
             grupo.addAction(a)
             ap.addAction(a)
+        m.addAction(self.a_fondo)
         m.addSeparator()
         m.addAction(self.a_acerca)
         m = mb.addMenu("&Salir")
@@ -193,8 +196,9 @@ class Principal(QMainWindow):
         secciones = [("Ingresos", [self.a_asi, self.a_ape, self.a_cta, self.a_pro, self.a_cco]),
                      ("Informes", [self.a_b8, self.a_bti, self.a_ld, self.a_ldt, self.a_may]),
                      ("Compras", [self.a_lc]),
-                     ("Utilidades", [self.a_emp, self.a_usu, self.a_imp, self.a_res])]
+                     ("Utilidades", [self.a_emp, self.a_usu, self.a_imp, self.a_res, self.a_fondo])]
         cortos = {id(self.a_imp): "Importar desde DBF", id(self.a_ape): "Asiento de apertura", id(self.a_res): "Respaldar datos",
+                  id(self.a_fondo): "Imagen de fondo",
                   id(self.a_ldt): "Diario por tipo", id(self.a_may): "Mayor"}
         for titulo, acciones in secciones:
             lay.addWidget(tema.etiqueta(titulo, "seccion"))
@@ -239,8 +243,8 @@ class Principal(QMainWindow):
         area = QScrollArea()
         area.setWidgetResizable(True)
         area.setFrameShape(QFrame.Shape.NoFrame)
-        lienzo = QWidget()
-        lienzo.setObjectName("lienzo")
+        lienzo = self.lienzo = fondo.Lienzo()
+        fondo.aplicar(self.cfg, lienzo)
         lay = tema.margenes(QVBoxLayout(lienzo), 8, 6)
 
         # --- estado vacío (sin empresa seleccionada)
@@ -401,6 +405,9 @@ class Principal(QMainWindow):
 
     def nuevo_comprobante(self):
         asientos.AsientoEditor(self, self.s).exec()
+
+    def elegir_fondo(self):
+        fondo.FondoDialog(self, self.cfg, self.lienzo).exec()
 
     def cambiar_tema(self, clave: str):
         self.cfg.tema = clave

@@ -13,7 +13,7 @@ from .comunes import Buscador, FechaEdit, Sesion, error
 
 class ParametrosDialog(QDialog):
     def __init__(self, parent, sesion: Sesion, titulo: str, desde=True, tipo=False, cuentas=False,
-                 ccosto=False, rango=(None, None)):
+                 ccosto=False, rango=(None, None), formato_balance=False):
         super().__init__(parent)
         self.s = sesion
         self.setWindowTitle(titulo)
@@ -64,6 +64,13 @@ class ParametrosDialog(QDialog):
             form.addRow("", self.todos)
             form.addRow("Centro de costo", self.cc)
 
+        self.cb_formato = None
+        if formato_balance:
+            self.cb_formato = QComboBox()
+            self.cb_formato.addItem("Borrador · con códigos de cuenta", False)
+            self.cb_formato.addItem("Tributario · correlativo en lugar de códigos (para bancos y terceros)", True)
+            form.addRow("Formato", self.cb_formato)
+
         self.f_emision = FechaEdit(fecha=_dt.date.today())
         form.addRow("Fecha de emisión", self.f_emision)
         lay.addLayout(form)
@@ -94,6 +101,10 @@ class ParametrosDialog(QDialog):
     def emision(self):
         return self.f_emision.fecha()
 
+    @property
+    def tributario(self) -> bool:
+        return bool(self.cb_formato and self.cb_formato.currentData())
+
 
 def _rango_asientos(sesion: Sesion):
     return sesion.db.rango_fechas(sesion.periodo_id)
@@ -117,17 +128,19 @@ def libro_mayor(parent, sesion: Sesion):
 
 
 def balance_8(parent, sesion: Sesion):
-    dlg = ParametrosDialog(parent, sesion, "Balance de 8 columnas", rango=_rango_asientos(sesion))
+    dlg = ParametrosDialog(parent, sesion, "Balance de 8 columnas", rango=_rango_asientos(sesion),
+                           formato_balance=True)
     if dlg.exec():
         impresion.mostrar(parent, reports.balance_8_columnas(sesion.db, sesion.empresa_id, sesion.periodo_id,
-                                                             dlg.desde, dlg.hasta, dlg.emision))
+                                                             dlg.desde, dlg.hasta, dlg.emision, dlg.tributario))
 
 
 def balance_tipo_informe(parent, sesion: Sesion):
-    dlg = ParametrosDialog(parent, sesion, "Balance tipo informe", desde=False, rango=_rango_asientos(sesion))
+    dlg = ParametrosDialog(parent, sesion, "Balance tipo informe", desde=False, rango=_rango_asientos(sesion),
+                           formato_balance=True)
     if dlg.exec():
         impresion.mostrar(parent, reports.balance_tipo_informe(sesion.db, sesion.empresa_id, sesion.periodo_id,
-                                                               dlg.hasta, dlg.emision))
+                                                               dlg.hasta, dlg.emision, dlg.tributario))
 
 
 def libro_compras(parent, sesion: Sesion):

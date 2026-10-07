@@ -168,6 +168,8 @@ _TRAZOS = {
     "ok": '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
     "alerta": '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>',
     "calendario": '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+    "imagen": '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9.5" r="1.5"/>'
+              '<path d="M21 16l-5-5-9 9"/>',
     "vista": '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     "chevron_abajo": '<path d="M6 9l6 6 6-6"/>',
     "chevron_arriba": '<path d="M6 15l6-6 6 6"/>',
@@ -290,6 +292,11 @@ QPushButton[variante="navegacion"] {{
 QPushButton[variante="navegacion"]:hover {{ background: {surface-200}; }}
 QPushButton[variante="navegacion"]:focus {{ border: 2px solid {focus}; padding: 0 10px; }}
 QPushButton[variante="navegacion"][activo="true"] {{ background: {brand-subtle}; font-weight: 600; }}
+QPushButton[variante="opcion"] {{ text-align: left; min-height: 40px; padding: 0 12px; border: 1px solid {border};
+                                  background: {surface-200}; font-weight: 500; }}
+QPushButton[variante="opcion"]:hover {{ background: {surface-100}; border-color: {border-strong}; }}
+QPushButton[variante="opcion"]:checked {{ background: {brand-subtle}; border: 1px solid {brand}; }}
+QPushButton[variante="opcion"]:focus {{ border: 2px solid {focus}; padding: 0 11px; }}
 QPushButton[variante="enlace"] {{ border: 0; background: transparent; color: {brand}; padding: 0 4px;
                                   min-height: 24px; }}
 QPushButton[variante="enlace"]:hover {{ text-decoration: underline; }}

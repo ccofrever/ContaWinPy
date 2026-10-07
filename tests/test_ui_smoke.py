@@ -107,13 +107,15 @@ class TestInterfaz(unittest.TestCase):
         self.assertIn("dígito verificador", self.avisos()[-1])
 
         # --- seleccionar empresa y año (crea año 2027 desde el diálogo)
-        def sel_ano(d):
+        def sel_empresa(d):
             self.f.RESPUESTAS["int"] = (2027, True)
             d._nuevo()
-            d.tabla.selectRow(0)       # 2026
+            pid = lambda ano: self.db.q1("SELECT id FROM periodo WHERE empresa_id=? AND ano=?",
+                                         (d._empresa_vista, ano))["id"]
+            self.assertEqual(d._periodo_sel, pid(2027))     # el año creado queda marcado
+            d.elegir_periodo(pid(2026))
             d._aceptar()
-        self.H("SeleccionAnoDialog", sel_ano)
-        self.H("SeleccionEmpresaDialog", lambda d: d._aceptar())
+        self.H("SeleccionEmpresaDialog", sel_empresa)
         self.assertTrue(win.seleccionar_empresa())
         self.assertEqual(self.s.ano, 2026)
         self.assertIn("COLEGIO PRUEBA", win._status.text())
@@ -253,7 +255,10 @@ class TestInterfaz(unittest.TestCase):
         # --- informes: todos con vista previa
         n_antes = len(self.f.PAGINAS)
 
+        archivos = []
+
         def visor(v):
+            archivos.append(v.inf.nombre_archivo)
             v._previa()
             self.f.RESPUESTAS["file"] = os.path.join(self.tmp.name, v.inf.nombre_archivo + ".pdf")
             v._pdf()
@@ -268,6 +273,16 @@ class TestInterfaz(unittest.TestCase):
         informes_dlg.libro_mayor(win, self.s)
         informes_dlg.balance_8(win, self.s)
         informes_dlg.balance_tipo_informe(win, self.s)
+        self.assertEqual(archivos[-2:], ["balance_8_columnas", "balance_tipo_informe"])   # borrador por omisión
+
+        def tributario(d):
+            d.cb_formato.setCurrentIndex(1)
+            d._aceptar()
+        self.H("ParametrosDialog", tributario)
+        informes_dlg.balance_8(win, self.s)
+        informes_dlg.balance_tipo_informe(win, self.s)
+        self.assertEqual(archivos[-2:], ["balance_8_columnas_tributario", "balance_tipo_informe_tributario"])
+        self.H("ParametrosDialog", lambda d: d._aceptar())
         informes_dlg.libro_compras(win, self.s)
 
         def compras_cc(d):

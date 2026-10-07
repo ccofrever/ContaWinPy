@@ -9,6 +9,11 @@ Archivo contawin.ini junto al programa:
     [datos]
     base = datos\\contawin.db        ; ruta relativa a la carpeta del programa o absoluta
     dbf  =                          ; última carpeta ContaWin importada (se recuerda sola)
+
+    [fondo]
+    imagen = FONDO.BMP              ; imagen del área de trabajo (relativa al programa o absoluta)
+    modo   = tamano                 ; tamano, llenar, ajustar, mosaico o ninguno
+    escala = 100                    ; porcentaje del tamaño real de la imagen (modo «tamano»)
 """
 from __future__ import annotations
 
@@ -34,7 +39,7 @@ class Config:
         self.cp = configparser.ConfigParser()
         if os.path.exists(ruta):
             self.cp.read(ruta, encoding="utf-8")
-        for sec in ("main", "datos"):
+        for sec in ("main", "datos", "fondo"):
             if not self.cp.has_section(sec):
                 self.cp.add_section(sec)
         if not os.path.exists(ruta):
@@ -77,4 +82,37 @@ class Config:
     @carpeta_dbf.setter
     def carpeta_dbf(self, valor: str):
         self.cp.set("datos", "dbf", valor or "")
+        self.guardar()
+
+    # ---------------------------------------------------------------- imagen de fondo
+    @property
+    def fondo_imagen(self) -> str:
+        """Ruta absoluta de la imagen de fondo ('' si no hay)."""
+        r = self.cp.get("fondo", "imagen", fallback="FONDO.BMP")
+        if r and not os.path.isabs(r):
+            r = os.path.join(carpeta_programa(), r)
+        return r
+
+    @property
+    def fondo_modo(self) -> str:
+        return self.cp.get("fondo", "modo", fallback="tamano") or "tamano"
+
+    @property
+    def fondo_escala(self) -> int:
+        try:
+            return max(10, min(400, self.cp.getint("fondo", "escala", fallback=100)))
+        except ValueError:
+            return 100
+
+    def guardar_fondo(self, imagen: str, modo: str, escala: int):
+        if imagen:     # dentro de la carpeta del programa se guarda relativa, para poder moverla
+            try:
+                rel = os.path.relpath(imagen, carpeta_programa())
+                if not rel.startswith(".."):
+                    imagen = rel
+            except ValueError:   # otra unidad de disco
+                pass
+        self.cp.set("fondo", "imagen", imagen or "")
+        self.cp.set("fondo", "modo", modo)
+        self.cp.set("fondo", "escala", str(int(escala)))
         self.guardar()
