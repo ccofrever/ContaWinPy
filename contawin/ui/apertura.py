@@ -53,7 +53,7 @@ class AperturaDialog(QDialog):
         lay.addWidget(tema.etiqueta("Cuenta de patrimonio donde se traspasa el resultado", "etiqueta"))
         self.cuenta = Buscador()
         self.cuenta.set_items([(c["codigo"], c["nombre"]) for c in db.cuentas(empresa_id)
-                               if c["codigo"][:1] not in ("3", "4")], util.formato_codigo)
+                               if not util.es_cuenta_resultado(c["codigo"])], util.formato_codigo)
         self.cuenta.set_codigo(db.cuenta_resultado_sugerida(empresa_id))
         lay.addWidget(self.cuenta)
         lay.addWidget(tema.etiqueta(apertura.resumen_resultado(self.sc["resultado"]), "ayuda"))

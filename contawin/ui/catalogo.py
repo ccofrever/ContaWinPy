@@ -23,10 +23,12 @@ class Catalogo(QDialog):
                  describir: Callable[[object], str] | None = None,
                  informe: Callable[[], object] | None = None,
                  extras: list[tuple[str, str, Callable[[object], None]]] | None = None,
-                 tamano: tuple[int, int] = (820, 560)):
+                 tamano: tuple[int, int] = (820, 560), al_final: bool = False):
         """cargar(orden) -> [(clave, [valores visibles])]
-        extras: botones adicionales (texto, icono, función(clave_seleccionada))"""
+        extras: botones adicionales (texto, icono, función(clave_seleccionada))
+        al_final: al abrir, marca el último registro (p. ej. el último comprobante ingresado)"""
         super().__init__(parent)
+        self.al_final = al_final
         self.setWindowTitle(titulo)
         self.resize(*tamano)
         self._cargar, self._nuevo, self._modificar = cargar, nuevo, modificar
@@ -106,7 +108,9 @@ class Catalogo(QDialog):
         self.tabla.filtrar(self.ed_buscar.text())
         if actual is None or not self.tabla.seleccionar_dato(actual):
             if self.tabla.rowCount():
-                self.tabla.selectRow(0)
+                fila = self.tabla.rowCount() - 1 if self.al_final else 0
+                self.tabla.selectRow(fila)
+                self.tabla.scrollToItem(self.tabla.item(fila, 0))
 
     def _extra(self, fn):
         clave = self.tabla.dato_actual()
@@ -120,6 +124,7 @@ class Catalogo(QDialog):
         clave = self._nuevo()
         if clave is not None:
             self.refrescar(clave)
+        self.tabla.setFocus()
 
     def accion_modificar(self):
         clave = self.tabla.dato_actual()
@@ -127,6 +132,7 @@ class Catalogo(QDialog):
             return
         if self._modificar(clave) is not None:
             self.refrescar(clave)
+        self.tabla.setFocus()
 
     def accion_borrar(self):
         clave = self.tabla.dato_actual()
@@ -135,12 +141,26 @@ class Catalogo(QDialog):
         desc = self._describir(clave) if self._describir else str(clave)
         if not confirmar(self, f"¿Borrar este registro?\n\n{desc}", "Borrar registro"):
             return
+        anterior = self._clave_vecina(-1)
+        if anterior is None:
+            anterior = self._clave_vecina(+1)      # era el primero: queda en el siguiente
         try:
             self._borrar(clave)
         except ErrorDatos as e:
             error(self, str(e))
             return
-        self.refrescar()
+        self.refrescar(anterior)
+        self.tabla.setFocus()
+
+    def _clave_vecina(self, paso: int):
+        """Clave de la fila visible anterior (paso=-1) o siguiente (+1) a la seleccionada."""
+        r = self.tabla.currentRow() + paso
+        while 0 <= r < self.tabla.rowCount():
+            if not self.tabla.isRowHidden(r):
+                it = self.tabla.item(r, 0)
+                return it.data(Qt.ItemDataRole.UserRole) if it else None
+            r += paso
+        return None
 
     def accion_excel(self):
         inf = self._informe()

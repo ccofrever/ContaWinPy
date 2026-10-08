@@ -79,6 +79,55 @@ class TestContabilidad(unittest.TestCase):
         self.db.borrar_asiento(a2["id"])
         self.assertEqual(self.db.q1("SELECT COUNT(*) n FROM detalle")["n"], 2)
 
+    def test_cuentas_de_resultado_grupo_5(self):
+        """Plan con resultado en el grupo 5 (ventas 51.01, costos 51.02): van a Pérdida/Ganancia y
+        se cierran en la apertura; el patrimonio 23.xx sigue siendo de balance."""
+        for cod, nom in [("230550", "UTILIDAD ACUMULADA"), ("510101", "VENTAS"), ("510201", "COSTO DE VENTA")]:
+            self.db.guardar_cuenta(self.emp, cod, nom, False, True)
+        self.db.guardar_asiento(self.per, dict(tipo="T", fecha="2026-05-01", glosa="venta"), [
+            dict(codigo="110101", debe=1000, haber=0), dict(codigo="510101", debe=0, haber=1000)])
+        self.db.guardar_asiento(self.per, dict(tipo="T", fecha="2026-05-02", glosa="costo"), [
+            dict(codigo="510201", debe=600, haber=0), dict(codigo="110101", debe=0, haber=600)])
+        b = reports.calcular_balance_8(self.db, self.emp, self.per, "2026-01-01", "2026-12-31")
+        f = {x["codigo"]: x for x in b["filas"]}
+        self.assertEqual((f["510101"]["ganancia"], f["510101"]["pasivo"]), (1000, 0))
+        self.assertEqual((f["510201"]["perdida"], f["510201"]["activo"]), (600, 0))
+        self.assertEqual(f["110101"]["activo"], 400)
+        self.assertTrue(b["es_ganancia"])
+        self.assertEqual(b["resultado"]["perdida"], 400)
+        s = b["sumas"]
+        self.assertEqual((s["activo"], s["perdida"]), (s["pasivo"], s["ganancia"]))
+        sc = self.db.saldos_cierre(self.per)
+        self.assertNotIn("510101", sc["saldos"])
+        self.assertNotIn("510201", sc["saldos"])
+        self.assertEqual(sc["resultado"], -400)                  # utilidad
+        self.assertEqual(self.db.cuenta_resultado_sugerida(self.emp), "230550")
+
+    def test_orden_lineas_al_guardar(self):
+        aid = self.db.guardar_asiento(self.per, dict(tipo="T", fecha="2026-03-01", glosa="orden"), [
+            dict(codigo="410101", debe=0, haber=300), dict(codigo="310101", debe=100, haber=0),
+            dict(codigo="210101", debe=0, haber=50), dict(codigo="110101", debe=250, haber=0)])
+        det = self.db.detalle_asiento(aid)
+        self.assertEqual([(l["codigo"], l["debe"], l["haber"]) for l in det],
+                         [("110101", 250, 0), ("310101", 100, 0), ("210101", 0, 50), ("410101", 0, 300)])
+
+    def test_calculadora_y_mascara(self):
+        ev = util.evaluar_expresion
+        self.assertEqual(ev("119.000 / 1,19"), 100000)
+        self.assertEqual(ev("1.000.000 + 250.000"), 1250000)
+        self.assertEqual(ev("(100 + 50) * 2"), 300)
+        self.assertEqual(ev("100.000 * 19%"), 19000)
+        self.assertAlmostEqual(ev("10 / 1.19"), 8.403361, 5)        # '1.19' sin grupos de 3: decimal
+        self.assertEqual(util.redondear_pesos(2.5), 3)
+        self.assertEqual(util.redondear_pesos(ev("1000 / 3")), 333)
+        for malo in ("", "5 +", "1 / 0", "import os", "2 ** 3"):
+            with self.assertRaises(ValueError):
+                ev(malo)
+        self.assertEqual(util.mascara_monto("1000000"), "1.000.000")
+        self.assertEqual(util.mascara_monto("1.0000"), "10.000")
+        self.assertEqual(util.mascara_monto("12a3"), "123")
+        self.assertEqual(util.mascara_monto(""), "")
+
     def test_balance_8(self):
         self._asientos()
         b = reports.calcular_balance_8(self.db, self.emp, self.per, "2026-01-01", "2026-12-31")

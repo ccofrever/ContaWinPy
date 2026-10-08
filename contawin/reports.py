@@ -257,11 +257,10 @@ def calcular_balance_8(db: Database, empresa_id: int, periodo_id: int, desde, ha
         dif = deb - cre
         deudor, acreedor = (dif, 0) if dif > 0 else (0, -dif)
         activo = pasivo = perdida = ganancia = 0
-        t = codigo[:1]
-        if t in ("1", "2"):
-            activo, pasivo = deudor, acreedor
-        elif t in ("3", "4"):
+        if util.es_cuenta_resultado(codigo):
             perdida, ganancia = deudor, acreedor
+        else:
+            activo, pasivo = deudor, acreedor
         f = dict(codigo=codigo, nombre=nombres.get(codigo, "(cuenta no existe)"), debitos=deb, creditos=cre,
                  deudor=deudor, acreedor=acreedor, activo=activo, pasivo=pasivo, perdida=perdida,
                  ganancia=ganancia)

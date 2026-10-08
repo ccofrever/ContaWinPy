@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtGui import QKeySequence, QRegularExpressionValidator, QShortcut
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QGridLayout, QHBoxLayout, QLabel,
@@ -13,9 +13,11 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QGrid
 from .. import reports, util
 from ..db import ErrorDatos
 from . import impresion, tema
+from .calculadora import Calculadora
 from .catalogo import Catalogo
-from .comunes import (Buscador, FechaEdit, MontoEdit, Sesion, Tabla, confirmar, error)
-from .mantenedores import nuevo_proveedor
+from .comunes import (Buscador, CodigoCuentaEdit, FechaEdit, MontoEdit, Sesion, Tabla, confirmar,
+                      error, info)
+from .mantenedores import FormCuenta, nuevo_proveedor
 
 
 def _mayusculas(e: QLineEdit):
@@ -170,28 +172,113 @@ class DocumentoCompraDialog(QDialog):
 # ===========================================================================
 # Línea de detalle (GetDetalle / DLG_DETALLE)
 # ===========================================================================
+class SelectorCuenta(QDialog):
+    """Búsqueda de una cuenta por código o nombre (F2 o «Buscar…» en la línea del comprobante)."""
+
+    def __init__(self, parent, cuentas: list, texto: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle("Buscar cuenta")
+        self.resize(620, 480)
+        self.codigo: str | None = None
+        lay = tema.margenes(QVBoxLayout(self))
+        lay.addWidget(tema.etiqueta("Buscar cuenta", "titulo"))
+        self.buscar = QLineEdit(texto)
+        self.buscar.setPlaceholderText("Escribe parte del código o del nombre")
+        self.buscar.setClearButtonEnabled(True)
+        self.buscar.addAction(tema.icono("buscar"), QLineEdit.ActionPosition.LeadingPosition)
+        lay.addWidget(self.buscar)
+        self.tabla = Tabla([("Código", 100, "L"), ("Nombre", 0, "L")], self)
+        self.tabla.cargar([[util.formato_codigo(c["codigo"]), c["nombre"]] for c in cuentas],
+                          [c["codigo"] for c in cuentas])
+        self.tabla.doubleClicked.connect(lambda _: self._aceptar())
+        lay.addWidget(self.tabla, 1)
+        bb = tema.botones_dialogo("Elegir", "Cancelar")
+        bb.accepted.connect(self._aceptar)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.buscar.textChanged.connect(self._filtrar)
+        self.buscar.returnPressed.connect(self._aceptar)
+        atajo = QShortcut(QKeySequence(Qt.Key.Key_Down), self.buscar)
+        atajo.setContext(Qt.ShortcutContext.WidgetShortcut)
+        atajo.activated.connect(self.tabla.setFocus)
+        self._filtrar(texto)
+        self.buscar.setFocus()
+
+    def _filtrar(self, texto: str):
+        self.tabla.filtrar(texto)
+        # deja marcada la primera cuenta visible, para elegirla con Enter
+        if self.tabla.dato_actual() is None or self.tabla.isRowHidden(self.tabla.currentRow()):
+            for r in range(self.tabla.rowCount()):
+                if not self.tabla.isRowHidden(r):
+                    self.tabla.selectRow(r)
+                    break
+
+    def _aceptar(self):
+        r = self.tabla.currentRow()
+        if r < 0 or self.tabla.isRowHidden(r):
+            return
+        self.codigo = self.tabla.dato_actual()
+        self.accept()
+
+
 class LineaDialog(QDialog):
+    """Cuenta + monto en el Debe o en el Haber. El código se escribe con la máscara 99.99.99 (igual
+    que al crear la cuenta) y el nombre aparece al lado; F2 o «Buscar…» busca por nombre. El cursor
+    parte en la cuenta y Enter avanza Cuenta → Debe → Haber → Aceptar. Si la cuenta no existe,
+    ofrece crearla."""
+
     def __init__(self, parent, sesion: Sesion, cuentas: list, linea: dict | None,
-                 cdcosto: str, fecha_asiento: _dt.date, sugerencia: tuple[int, int] = (0, 0)):
+                 cdcosto: str, fecha_asiento: _dt.date):
         super().__init__(parent)
         self.s, self.cdcosto, self.fecha_asiento = sesion, cdcosto, fecha_asiento
         self.cuentas = {c["codigo"]: c for c in cuentas}
+        self.cuenta_creada = False          # el editor recarga el plan de cuentas si se creó una
         self.linea_original = linea or {}
         self.setWindowTitle("Línea del comprobante")
-        self.setMinimumWidth(580)
+        self.setMinimumWidth(620)
         lay = tema.margenes(QVBoxLayout(self))
         lay.addWidget(tema.etiqueta("Modificar línea" if linea else "Nueva línea", "titulo"))
         form = tema.formulario(QFormLayout())
-        self.cuenta = Buscador()
-        self.cuenta.set_items([(c["codigo"], c["nombre"]) for c in cuentas], util.formato_codigo)
-        self.cuenta.set_codigo(self.linea_original.get("codigo"))
-        self.debe = MontoEdit(valor=self.linea_original.get("debe", sugerencia[0]))
-        self.haber = MontoEdit(valor=self.linea_original.get("haber", sugerencia[1]))
+
+        self.cuenta = CodigoCuentaEdit()
+        self.cuenta.setFixedWidth(120)
+        self.cuenta.setToolTip("Código de la cuenta · F2 para buscarla por nombre")
+        self.cuenta.set_codigo(self.linea_original.get("codigo") or "")
+        self.nombre_cuenta = QLineEdit()
+        self.nombre_cuenta.setReadOnly(True)
+        self.nombre_cuenta.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        fila_cuenta = QHBoxLayout()
+        fila_cuenta.setSpacing(tema.ESPACIO[2])
+        fila_cuenta.addWidget(self.cuenta)
+        fila_cuenta.addWidget(self.nombre_cuenta, 1)
+        b_buscar = tema.boton("Buscar…", "buscar")
+        b_buscar.setToolTip("Buscar la cuenta por nombre (F2)")
+        b_buscar.clicked.connect(self._buscar)
+        b_nueva = tema.boton("Nueva cuenta…", "mas")
+        b_nueva.setToolTip("Agregar una cuenta al plan de cuentas")
+        b_nueva.clicked.connect(self._boton_nueva)
+        for b in (b_buscar, b_nueva):
+            b.setAutoDefault(False)
+            b.setFocusPolicy(Qt.FocusPolicy.ClickFocus)    # Tab va de la cuenta directo al Debe
+            fila_cuenta.addWidget(b)
+        form.addRow("Cuenta", fila_cuenta)
         self.aviso_doc = QLabel("")
         tema.marcar(self.aviso_doc, estado="aviso")
-        self.cuenta.currentIndexChanged.connect(lambda _: self._aviso())
-        form.addRow("Cuenta", self.cuenta)
         form.addRow(self.aviso_doc)
+
+        # línea nueva: Debe y Haber vacíos, sin proponer montos
+        self.debe = MontoEdit(valor=self.linea_original.get("debe", 0))
+        self.haber = MontoEdit(valor=self.linea_original.get("haber", 0))
+        for w in (self.debe, self.haber):
+            if not w.valor():
+                w.clear()
+        # el monto va en el Debe o en el Haber: al escribir en uno, el otro queda en cero
+        self.debe.textEdited.connect(lambda _: self._exclusivo(self.debe, self.haber))
+        self.haber.textEdited.connect(lambda _: self._exclusivo(self.haber, self.debe))
+        # calculadora: sugiere poner el resultado en el campo (Debe o Haber) donde estaba el cursor
+        self._campo_monto = self.debe
+        for w in (self.debe, self.haber):
+            w.installEventFilter(self)
         montos = QHBoxLayout()
         montos.setSpacing(tema.ESPACIO[4])
         for et, w in [("Debe", self.debe), ("Haber", self.haber)]:
@@ -200,30 +287,164 @@ class LineaDialog(QDialog):
             col.addWidget(tema.etiqueta(et, "etiqueta"))
             col.addWidget(w)
             montos.addLayout(col)
+        col = QVBoxLayout()
+        col.setSpacing(tema.ESPACIO[2])
+        col.addWidget(tema.etiqueta(" ", "etiqueta"))
+        b_calc = tema.boton("Calculadora", "calculadora")
+        b_calc.setAutoDefault(False)
+        b_calc.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        b_calc.setToolTip("Calcular el monto (F4); el resultado va al Debe o al Haber")
+        b_calc.clicked.connect(self.calculadora)
+        col.addWidget(b_calc)
+        montos.addLayout(col)
         form.addRow(montos)
         lay.addLayout(form)
-        lay.addWidget(tema.etiqueta("Una línea lleva monto en el Debe o en el Haber, no en ambos.", "ayuda"))
-        bb = tema.botones_dialogo("Aceptar", "Cancelar")
-        bb.accepted.connect(self._aceptar)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-        self._aviso()
+        lay.addWidget(tema.etiqueta("Una línea lleva monto en el Debe o en el Haber: al escribir en uno, "
+                                    "el otro queda en cero. Enter avanza al campo siguiente · "
+                                    "F2 busca la cuenta · F4 abre la calculadora.", "ayuda"))
+        # botones propios sin «default»: Enter avanza entre campos en vez de aceptar a medias
+        botones = QHBoxLayout()
+        botones.addStretch()
+        b_cancelar = tema.boton("Cancelar")
+        b_cancelar.clicked.connect(self.reject)
+        b_aceptar = tema.boton("Aceptar", variante="primario")
+        b_aceptar.clicked.connect(self._aceptar)
+        for b in (b_cancelar, b_aceptar):
+            b.setAutoDefault(False)
+            botones.addWidget(b)
+        lay.addLayout(botones)
+
+        self.cuenta.textChanged.connect(lambda _: self._mostrar_cuenta())
+        self.cuenta.returnPressed.connect(self._enter_cuenta)
+        atajo = QShortcut(QKeySequence(Qt.Key.Key_F2), self)
+        atajo.activated.connect(self._buscar)
+        QShortcut(QKeySequence(Qt.Key.Key_F4), self).activated.connect(self.calculadora)
+        self.debe.returnPressed.connect(lambda: self._aceptar() if self.debe.valor() else self.haber.setFocus())
+        self.haber.returnPressed.connect(self._aceptar)
+        self._mostrar_cuenta()
         self.linea: dict | None = None
         self.cuenta.setFocus()
 
-    def _aviso(self):
-        c = self.cuentas.get(self.cuenta.codigo() or "")
+    def showEvent(self, evento):
+        super().showEvent(evento)
+        # el cursor siempre parte en la cuenta (también al abrir otra línea seguida)
+        QTimer.singleShot(0, self._enfocar_cuenta)
+
+    def _enfocar_cuenta(self):
+        self.cuenta.setFocus()
+        if self.cuenta.codigo():
+            self.cuenta.selectAll()
+        else:
+            self.cuenta.setCursorPosition(0)
+
+    # ------------------------------------------------------------------ cuenta
+    def _codigo_escrito(self) -> str:
+        return self.cuenta.codigo()
+
+    def _codigo_valido(self) -> str | None:
+        """Código escrito si existe en el plan de cuentas; si no, None."""
+        cod = self._codigo_escrito()
+        return cod if cod in self.cuentas else None
+
+    def _mostrar_cuenta(self):
+        cod = self._codigo_escrito()
+        c = self.cuentas.get(cod)
+        if c:
+            self.nombre_cuenta.setText(c["nombre"])
+            tema.marcar(self.nombre_cuenta, error=False)
+        else:
+            self.nombre_cuenta.setText("La cuenta no existe" if len(cod) == 6 else "")
+            tema.marcar(self.nombre_cuenta, error=len(cod) == 6)
         pide = bool(c and c["cdocum"])
         self.aviso_doc.setText("⚠ Esta cuenta pide documento de compra al aceptar." if pide else "")
         self.aviso_doc.setVisible(pide)
 
+    def _poner_cuenta(self, codigo: str):
+        self.cuenta.set_codigo(codigo)
+        self._mostrar_cuenta()
+        self.debe.setFocus()
+        self.debe.selectAll()
+
+    def _buscar(self):
+        dlg = SelectorCuenta(self, list(self.cuentas.values()))
+        if dlg.exec() and dlg.codigo:
+            self._poner_cuenta(dlg.codigo)
+        else:
+            self.cuenta.setFocus()
+
+    def _enter_cuenta(self):
+        cod = self._codigo_escrito()
+        if not cod:                        # sin código: abre la búsqueda por nombre
+            self._buscar()
+        elif self._codigo_valido():
+            self.debe.setFocus()
+            self.debe.selectAll()
+        elif len(cod) == 6:
+            self._ofrecer_crear(cod)
+        else:
+            error(self, "Completa el código de la cuenta (99.99.99) o búscala con F2.")
+            self.cuenta.setFocus()
+
+    def _ofrecer_crear(self, cod: str) -> bool:
+        if not confirmar(self, f"La cuenta {util.formato_codigo(cod)} no existe en el plan de cuentas.\n\n"
+                               "¿Quieres crearla ahora?"):
+            self.cuenta.setFocus()
+            return False
+        return self._crear_cuenta(cod)
+
+    def _boton_nueva(self):
+        # siempre en blanco; sólo propone el código si se escribió uno completo que todavía no existe
+        cod = self._codigo_escrito()
+        self._crear_cuenta(cod if len(cod) == 6 and not self._codigo_valido() else "")
+
+    def _crear_cuenta(self, cod: str = "") -> bool:
+        """Abre el formulario de cuenta nueva (con el código propuesto, si hay). Al guardarla queda
+        puesta en la línea."""
+        f = FormCuenta(self, self.s, propuesta=dict(codigo=cod) if cod else None)
+        if not f.exec() or not f.cod_guardado:
+            self.cuenta.setFocus()
+            return False
+        self.cuentas = {c["codigo"]: c for c in self.s.db.cuentas(self.s.empresa_id)}
+        self.cuenta_creada = True
+        self._poner_cuenta(f.cod_guardado)
+        return True
+
+    # ------------------------------------------------------------------ montos
+    def eventFilter(self, obj, evento):
+        if evento.type() == QEvent.Type.FocusIn and obj in (self.debe, self.haber):
+            self._campo_monto = obj
+        return super().eventFilter(obj, evento)
+
+    def calculadora(self):
+        campo = self._campo_monto
+        destino = "haber" if campo is self.haber else "debe"
+        dlg = Calculadora(self, campo.valor(), destino)
+        if not dlg.exec() or dlg.resultado is None:
+            campo.setFocus()
+            return
+        poner, otro = (self.debe, self.haber) if dlg.destino == "debe" else (self.haber, self.debe)
+        poner.set_valor(dlg.resultado)
+        otro.clear()                       # Debe y Haber son excluyentes
+        poner.setFocus()
+        poner.selectAll()
+
+    @staticmethod
+    def _exclusivo(escrito: MontoEdit, otro: MontoEdit):
+        if escrito.valor() and otro.valor():
+            otro.clear()
+
     def _aceptar(self):
-        codigo = self.cuenta.codigo()
-        c = self.cuentas.get(codigo or "")
-        if not c:
-            error(self, "Selecciona una cuenta del plan de cuentas.")
+        cod = self._codigo_escrito()
+        if cod and not self._codigo_valido() and len(cod) == 6:
+            if not self._ofrecer_crear(cod):
+                return
+        codigo = self._codigo_valido()
+        if not codigo:
+            error(self, "Ingresa el código de una cuenta del plan de cuentas (F2 para buscarla) "
+                        "o créala con «Nueva cuenta…».")
             self.cuenta.setFocus()
             return
+        c = self.cuentas[codigo]
         debe, haber = self.debe.valor(), self.haber.valor()
         if debe < 0 or haber < 0:
             error(self, "Los montos no pueden ser negativos.")
@@ -263,12 +484,13 @@ class AsientoEditor(QDialog):
         self.resize(980, 660)
 
         lay = tema.margenes(QVBoxLayout(self))
-        num = a.get("numero") or db.siguiente_numero(sesion.periodo_id)
+        # el número de un comprobante nuevo se genera al guardarlo (el siguiente del año en ese momento)
         titulo = QHBoxLayout()
         titulo.setSpacing(tema.ESPACIO[3])
-        self.lbl_numero = tema.etiqueta(f"Comprobante N° {util.fmt_monto(num)}", "titulo")
+        self.lbl_numero = tema.etiqueta(f"Comprobante N° {util.fmt_monto(a['numero'])}" if asiento_id
+                                        else "Comprobante nuevo", "titulo")
         titulo.addWidget(self.lbl_numero)
-        chip = QLabel("Modificando" if asiento_id else "Nuevo")
+        chip = QLabel("Modificando" if asiento_id else "N° se asigna al guardar")
         tema.marcar(chip, chip=True)
         titulo.addWidget(chip)
         titulo.addStretch()
@@ -342,6 +564,7 @@ class AsientoEditor(QDialog):
         bot.setSpacing(tema.ESPACIO[2])
         bot.addWidget(tema.etiqueta("Ctrl+S guarda · Insert agrega línea · Supr borra línea", "ayuda"))
         bot.addStretch()
+        self.botones_guardar = []
         for texto, ic, acc, variante in [("&Cerrar", "cerrar", self.reject, "secundario"),
                                          ("Guardar e &imprimir", "imprimir", self.guardar_imprimir, "secundario"),
                                          ("&Guardar comprobante", "guardar", self.guardar, "primario")]:
@@ -349,6 +572,8 @@ class AsientoEditor(QDialog):
             b.setAutoDefault(False)
             b.clicked.connect(acc)
             bot.addWidget(b)
+            if acc != self.reject:
+                self.botones_guardar.append(b)
         lay.addLayout(bot)
 
         for tecla, accion in [(Qt.Key.Key_Insert, self.nueva_linea), (Qt.Key.Key_Delete, self.borrar_linea),
@@ -362,12 +587,18 @@ class AsientoEditor(QDialog):
         (self.glosa if not asiento_id else self.tabla).setFocus()
 
     def _fecha_sugerida(self) -> _dt.date:
+        """Fecha del último comprobante ingresado: el guardado en esta sesión y, si no hay, el de
+        número más alto del año; sin comprobantes, hoy (o el 1 de enero si es otro año)."""
+        ultima = self.s.ultima_fecha.get(self.s.periodo_id)
+        if ultima:
+            return ultima
+        r = self.s.db.q1("SELECT fecha FROM asiento WHERE periodo_id=? AND fecha IS NOT NULL "
+                         "ORDER BY numero DESC LIMIT 1", (self.s.periodo_id,))
+        if r and r["fecha"]:
+            return util.from_iso(r["fecha"])
         hoy = _dt.date.today()
         ano = self.s.ano or hoy.year
-        if hoy.year == ano:
-            return hoy
-        ultimo = self.s.db.q1("SELECT MAX(fecha) f FROM asiento WHERE periodo_id=?", (self.s.periodo_id,))
-        return util.from_iso(ultimo["f"]) if ultimo and ultimo["f"] else _dt.date(ano, 1, 1)
+        return hoy if hoy.year == ano else _dt.date(ano, 1, 1)
 
     def _marcar(self, *_):
         self.modificado = True
@@ -375,7 +606,11 @@ class AsientoEditor(QDialog):
     def _totales(self) -> tuple[int, int]:
         return sum(l["debe"] for l in self.lineas), sum(l["haber"] for l in self.lineas)
 
-    def _refrescar(self, seleccionar: int | None = None):
+    def _refrescar(self, seleccionar: int | dict | None = None):
+        """seleccionar: índice de fila o la línea (dict) que debe quedar marcada tras ordenar."""
+        self.lineas.sort(key=util.orden_linea)       # Debe primero, luego Haber; por código de cuenta
+        if isinstance(seleccionar, dict):
+            seleccionar = next((i for i, l in enumerate(self.lineas) if l is seleccionar), None)
         filas = []
         for l in self.lineas:
             d = l.get("documento")
@@ -388,6 +623,10 @@ class AsientoEditor(QDialog):
         td, th = self._totales()
         self.tot_debe.setText(util.fmt_pesos(td))
         self.tot_haber.setText(util.fmt_pesos(th))
+        # sólo se puede guardar un comprobante con líneas y cuadrado
+        for b in getattr(self, "botones_guardar", []):
+            b.setEnabled(self._cuadrado())
+            b.setToolTip("" if self._cuadrado() else "El comprobante debe estar cuadrado para guardarlo")
         if td == th:
             self.lbl_dif.setText("✓ Cuadrado" if td else "")
             tema.marcar(self.lbl_dif, estado="ok")
@@ -396,27 +635,38 @@ class AsientoEditor(QDialog):
                                  f"en el {'Debe' if td > th else 'Haber'}")
             tema.marcar(self.lbl_dif, estado="error")
 
+    def _cuadrado(self) -> bool:
+        td, th = self._totales()
+        return bool(self.lineas) and td == th
+
     def _cdcosto(self) -> str:
         return self.ccosto.codigo() or ""
 
+    def _recargar_cuentas(self, dlg: LineaDialog):
+        if dlg.cuenta_creada:
+            self.cuentas = self.s.db.cuentas(self.s.empresa_id)
+            self.nombres = {c["codigo"]: c["nombre"] for c in self.cuentas}
+
     def nueva_linea(self):
-        td, th = self._totales()
-        sugerencia = (th - td, 0) if th > td else (0, td - th)   # propone el monto que falta para cuadrar
-        dlg = LineaDialog(self, self.s, self.cuentas, None, self._cdcosto(), self.fecha.fecha(), sugerencia)
-        if dlg.exec() and dlg.linea:
+        dlg = LineaDialog(self, self.s, self.cuentas, None, self._cdcosto(), self.fecha.fecha())
+        ok = dlg.exec()
+        self._recargar_cuentas(dlg)
+        if ok and dlg.linea:
             self.lineas.append(dlg.linea)
             self.modificado = True
-            self._refrescar(len(self.lineas) - 1)
+            self._refrescar(dlg.linea)
 
     def modificar_linea(self):
         i = self.tabla.dato_actual()
         if i is None:
             return
         dlg = LineaDialog(self, self.s, self.cuentas, self.lineas[i], self._cdcosto(), self.fecha.fecha())
-        if dlg.exec() and dlg.linea:
+        ok = dlg.exec()
+        self._recargar_cuentas(dlg)
+        if ok and dlg.linea:
             self.lineas[i] = dlg.linea
             self.modificado = True
-            self._refrescar(i)
+            self._refrescar(dlg.linea)
 
     def borrar_linea(self):
         i = self.tabla.dato_actual()
@@ -430,6 +680,14 @@ class AsientoEditor(QDialog):
             self._refrescar(min(i, len(self.lineas) - 1))
 
     def _grabar(self) -> bool:
+        if not self.lineas:
+            error(self, "El comprobante no tiene líneas. Agrega las cuentas con «Nueva línea» (Insert).")
+            return False
+        td, th = self._totales()
+        if td != th:
+            error(self, f"Las sumas del comprobante no están cuadradas: diferencia {util.fmt_pesos(abs(td - th))} "
+                        f"en el {'Debe' if td > th else 'Haber'}.\n\nSólo se puede guardar un comprobante cuadrado.")
+            return False
         fecha = self.fecha.fecha()
         if self.s.ano and fecha.year != self.s.ano:
             if not confirmar(self, f"La fecha {util.fmt_fecha(fecha)} no corresponde al año de trabajo "
@@ -440,16 +698,24 @@ class AsientoEditor(QDialog):
         for l in self.lineas:
             if l.get("documento"):
                 l["documento"]["cdcosto"] = cab["cdcosto"]
+        nuevo = self.asiento_id is None
         try:
             self.asiento_id = self.s.db.guardar_asiento(self.s.periodo_id, cab, self.lineas, self.asiento_id)
         except ErrorDatos as e:
             error(self, str(e))
             return False
+        self.numero = self.s.db.asiento(self.asiento_id)["numero"]
+        if nuevo:                              # el siguiente comprobante parte con esta fecha
+            self.s.ultima_fecha[self.s.periodo_id] = fecha
+        self.lbl_numero.setText(f"Comprobante N° {util.fmt_monto(self.numero)}")
+        self.nuevo_guardado = nuevo
         self.modificado = False
         return True
 
     def guardar(self):
         if self._grabar():
+            if self.nuevo_guardado:
+                info(self, f"Se guardó el comprobante N° {util.fmt_monto(self.numero)}.", "Comprobante guardado")
             self.accept()
 
     def guardar_imprimir(self):
@@ -499,4 +765,4 @@ def mantener_asientos(parent, sesion: Sesion):
              cargar, [("Número", "numero"), ("Fecha", "fecha"), ("Tipo", "tipo")],
              nuevo, modificar, db.borrar_asiento, describir,
              extras=[("Imprimir &comprobante", "imprimir", imprimir)],
-             tamano=(1040, 660)).exec()
+             tamano=(1040, 660), al_final=True).exec()

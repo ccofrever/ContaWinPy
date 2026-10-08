@@ -161,13 +161,19 @@ class TestInterfaz(unittest.TestCase):
                 d.haber.teclear(str(haber))
                 d._aceptar()
             return h
-        self.H("LineaDialog", linea("11.01.01", "1.000.000", 0))
-        ed.nueva_linea()
+        self.assertEqual(ed.lbl_numero.text(), "Comprobante nuevo")      # el N° se genera al guardar
+        # se ingresa primero el Haber; la tabla queda con el Debe arriba
         self.H("LineaDialog", linea("410101", 0, "1000000"))
         ed.nueva_linea()
+        self.H("LineaDialog", linea("11.01.01", "1.000.000", 0))
+        ed.nueva_linea()
+        self.assertEqual([l["codigo"] for l in ed.lineas], ["110101", "410101"])
+        self.assertEqual(ed.tabla.dato_actual(), 0)                   # queda marcada la línea recién ingresada
         self.assertEqual(ed.lbl_dif.text(), "✓ Cuadrado")
         ed.guardar()
         self.assertEqual(ed._result, 1)
+        self.assertEqual(ed.numero, 1)
+        self.assertIn("comprobante N° 1", self.f.MENSAJES[-1][1])
 
         # --- asiento 2: compra con documento (cuenta pide documento) y centro de costo
         ed = asientos.AsientoEditor(win, self.s)
@@ -192,13 +198,43 @@ class TestInterfaz(unittest.TestCase):
         self.assertIsNotNone(ed.lineas[0]["documento"])
         self.assertEqual(ed.lineas[0]["documento"]["neto"], 100000)
         self.assertEqual(ed.lineas[0]["documento"]["iva"], 19000)
-        # descuadrado -> no graba
+        # descuadrado -> no graba (y los botones de guardar quedan desactivados)
+        self.assertFalse(ed._cuadrado())
         ed.guardar()
         self.assertIn("no están cuadradas", self.avisos()[-1])
-        # la nueva línea propone el monto faltante en el haber
-        self.H("LineaDialog", lambda d: (self.assertEqual(d.haber.valor(), 119000), d.cuenta.teclear("110101"),
-                                         d._aceptar()))
+        self.assertEqual(ed._result, 0)
+
+        # la nueva línea no propone montos; escribir en el Debe deja el Haber en cero y viceversa
+        def linea_caja(d):
+            self.assertEqual((d.debe.text(), d.haber.text()), ("", ""))
+            d.cuenta.teclear("110101")
+            d.debe.teclear("5")
+            d.haber.teclear("119000")
+            self.assertEqual(d.haber.text(), "119.000")             # máscara numérica en vivo
+            self.assertEqual((d.debe.valor(), d.haber.valor()), (0, 119000))
+            # calculadora: sugiere el campo activo y el resultado puede ir al otro
+            d._campo_monto = d.haber
+
+            def calc(c):
+                self.assertEqual(c.destino, "haber")
+                self.assertEqual(c.expresion.text(), "119.000")
+                c.expresion.teclear("100.000 * 1,19")
+                c.poner("debe")
+            self.H("Calculadora", calc)
+            d.calculadora()
+            self.assertEqual((d.debe.valor(), d.haber.text()), (119000, ""))
+
+            def calc_haber(c):
+                c.expresion.teclear("119.000")
+                c.poner(c.destino)
+            d._campo_monto = d.haber
+            self.H("Calculadora", calc_haber)
+            d.calculadora()
+            self.assertEqual((d.debe.text(), d.haber.valor()), ("", 119000))
+            d._aceptar()
+        self.H("LineaDialog", linea_caja)
         ed.nueva_linea()
+        self.assertTrue(ed._cuadrado())
         ed.guardar_imprimir()
         self.assertEqual(ed._result, 1)
         self.assertTrue(self.f.PAGINAS)
@@ -220,13 +256,47 @@ class TestInterfaz(unittest.TestCase):
         self.assertIn("Descuadrado", ed.lbl_dif.text())
         ed.tabla.selectRow(1)
         ed.borrar_linea()
-        self.H("LineaDialog", lambda d: (d.cuenta.teclear("21.01.01"), d._aceptar()))
+        # cuenta que no existe: ofrece crearla con el código escrito y la deja en la línea
+        def form_cuenta_nueva(f):
+            self.assertEqual(f.codigo.codigo(), "210102")
+            f.nombre.teclear("acreedores varios")
+            f._aceptar()
+        self.H("FormCuenta", form_cuenta_nueva)
+        self.H("LineaDialog", lambda d: (d.cuenta.teclear("21.01.02"), d.haber.teclear("119000"), d._aceptar()))
+        ed.nueva_linea()
+        self.assertEqual(ed.lineas[-1]["codigo"], "210102")
+        self.assertEqual(ed.nombres["210102"], "ACREEDORES VARIOS")
+        self.assertEqual(self.db.nombre_cuenta(self.s.empresa_id, "210102"), "ACREEDORES VARIOS")
+
+        # «Nueva cuenta…» con una cuenta existente escrita: el formulario se abre en blanco
+        def form_en_blanco(f):
+            self.assertEqual(f.codigo.codigo(), "")
+            self.assertEqual(f.nombre.text(), "")
+        self.H("FormCuenta", form_en_blanco)
+
+        def linea_con_existente(d):
+            d.cuenta.teclear("11.01.01")
+            self.assertEqual(d.nombre_cuenta.text(), "CAJA")
+            d._boton_nueva()
+            # buscar por nombre (F2) y elegir
+            def selector(sel):
+                sel.buscar.teclear("proveedores")
+                sel._aceptar()
+            self.H("SelectorCuenta", selector)
+            d._buscar()
+            self.assertEqual(d.cuenta.codigo(), "210101")
+            self.assertEqual(d.nombre_cuenta.text(), "PROVEEDORES")
+            return 0
+        self.H("LineaDialog", linea_con_existente)
         ed.nueva_linea()
         ed.guardar()
         self.assertEqual(ed._result, 1)
         det = self.db.detalle_asiento(aid)
-        self.assertEqual([l["codigo"] for l in det], ["310101", "210101"])
+        self.assertEqual([l["codigo"] for l in det], ["310101", "210102"])
         self.assertIsNotNone(det[0]["documento"])
+
+        # --- un comprobante nuevo parte con la fecha del último ingresado (no con la de hoy)
+        self.assertEqual(asientos.AsientoEditor(win, self.s).fecha.fecha(), dt.date(2026, 2, 10))
 
         # --- fecha fuera del año: pregunta y respeta el "No"
         ed = asientos.AsientoEditor(win, self.s)
@@ -244,7 +314,11 @@ class TestInterfaz(unittest.TestCase):
         # --- lista de asientos: imprimir comprobante y borrar
         def cat_asientos(c):
             self.assertEqual(c.tabla.rowCount(), 2)
+            self.assertEqual(c.tabla.currentRow(), 1)          # abre en el último comprobante
+            anterior = c._clave_vecina(-1)                        # al borrar queda en el anterior
             c.tabla.selectRow(0)
+            self.assertEqual(anterior, c.tabla.dato_actual())
+            self.assertIsNone(c._clave_vecina(-1))
             c._extra(lambda aid: None)
             c.ed_buscar.teclear("compra")
             self.assertTrue(c.tabla.isRowHidden(0))

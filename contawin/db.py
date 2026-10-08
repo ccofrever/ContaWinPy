@@ -327,7 +327,7 @@ class Database:
     def saldos_cierre(self, periodo_id: int) -> dict:
         """Saldos finales del año para el asiento de apertura del siguiente.
 
-        Las cuentas de resultado (grupos 3 y 4) se cierran: su saldo neto es el resultado
+        Las cuentas de resultado (todo grupo distinto de 1 y 2) se cierran: su saldo neto es el resultado
         del ejercicio (debe - haber: > 0 pérdida, < 0 utilidad). Las demás se traspasan.
         Devuelve {"saldos": {codigo: debe-haber}, "resultado": int}.
         """
@@ -337,7 +337,7 @@ class Database:
                            GROUP BY d.codigo ORDER BY d.codigo""", (periodo_id,)):
             if not r["s"]:
                 continue
-            if r["codigo"][:1] in ("3", "4"):
+            if util.es_cuenta_resultado(r["codigo"]):
                 resultado += r["s"]
             else:
                 saldos[r["codigo"]] = r["s"]
@@ -366,7 +366,8 @@ class Database:
             return r["valor"]
         for c in self.cuentas(empresa_id):
             n = c["nombre"]
-            if c["codigo"][:1] not in ("3", "4") and ("RESULTADO" in n or "UTILIDAD" in n or "PERDIDA" in n):
+            if not util.es_cuenta_resultado(c["codigo"]) and ("RESULTADO" in n or "UTILIDAD" in n
+                                                               or "PERDIDA" in n):
                 return c["codigo"]
         return None
 
@@ -561,6 +562,7 @@ class Database:
         cab: tipo, fecha (date/ISO), glosa, cdcosto
         lineas: [{codigo, debe, haber, documento: dict|None}]
         """
+        lineas = sorted(lineas, key=util.orden_linea)      # Debe primero, luego Haber; por código
         tot_debe = sum(int(l.get("debe") or 0) for l in lineas)
         tot_haber = sum(int(l.get("haber") or 0) for l in lineas)
         if tot_debe != tot_haber:

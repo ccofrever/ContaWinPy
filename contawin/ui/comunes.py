@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import datetime as _dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QDate, QRegularExpression, Qt
-from PySide6.QtGui import QRegularExpressionValidator
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QCompleter, QDateEdit, QHeaderView, QLineEdit,
-                               QMessageBox, QTableWidget, QTableWidgetItem, QWidget)
+from PySide6.QtGui import QRegularExpressionValidator, QTextCharFormat
+from PySide6.QtWidgets import (QAbstractItemView, QCalendarWidget, QComboBox, QCompleter, QDateEdit, QHeaderView,
+                               QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem, QToolButton, QWidget)
 
 from .. import util
 from ..db import Database
@@ -25,6 +25,7 @@ class Sesion:
     usuario: dict | None = None
     empresa: dict | None = None
     periodo: dict | None = None
+    ultima_fecha: dict = field(default_factory=dict)   # periodo_id -> fecha del último asiento ingresado
 
     @property
     def empresa_id(self) -> int | None:
@@ -87,10 +88,27 @@ class MontoEdit(QLineEdit):
         self.setValidator(QRegularExpressionValidator(QRegularExpression(r"-?[0-9.]{0,17}"), self))
         self.setMaxLength(18)
         self.set_valor(valor)
+        self.textEdited.connect(self._mascara)
         self.editingFinished.connect(self._formatear)
 
+    def _mascara(self, texto: str):
+        """Máscara numérica mientras se escribe: sólo dígitos, con los puntos de miles al día."""
+        nuevo = util.mascara_monto(texto)
+        if nuevo == texto:
+            return
+        # conserva la posición del cursor contando los dígitos que quedan a su derecha
+        pos = self.cursorPosition()
+        a_la_derecha = sum(ch.isdigit() for ch in texto[pos:])
+        self.setText(nuevo)
+        p, vistos = len(nuevo), 0
+        while p > 0 and vistos < a_la_derecha:
+            p -= 1
+            vistos += nuevo[p].isdigit()
+        self.setCursorPosition(p)
+
     def _formatear(self):
-        self.set_valor(self.valor())
+        if self.text().strip():         # un campo vacío queda vacío (vale 0) en vez de mostrar "0"
+            self.set_valor(self.valor())
 
     def valor(self) -> int:
         return util.parse_monto(self.text())
@@ -133,6 +151,28 @@ class FechaEdit(QDateEdit):
         super().__init__(parent)
         self.setDisplayFormat("dd/MM/yyyy")
         self.setCalendarPopup(True)
+        cal = self.calendarWidget()
+        cal.setMinimumSize(320, 260)
+        cal.setGridVisible(False)
+        cal.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        cal.setHorizontalHeaderFormat(QCalendarWidget.HorizontalHeaderFormat.ShortDayNames)
+        cal.setFirstDayOfWeek(Qt.DayOfWeek.Monday)
+        # días hábiles en el color de texto y fin de semana en el suave (los colores por omisión de
+        # Qt no se leen sobre el tema)
+        D = Qt.DayOfWeek
+        for dia in (D.Monday, D.Tuesday, D.Wednesday, D.Thursday, D.Friday, D.Saturday, D.Sunday):
+            formato = QTextCharFormat()
+            formato.setForeground(tema.qcolor("ink-muted" if dia in (D.Saturday, D.Sunday)
+                                              else "ink"))
+            cal.setWeekdayTextFormat(dia, formato)
+        for nombre, ic in (("qt_calendar_prevmonth", "chevron_izquierda"), ("qt_calendar_nextmonth", "chevron_derecha")):
+            b = cal.findChild(QToolButton, nombre)
+            if b is not None:
+                b.setIcon(tema.icono(ic, "ink"))
+        cabecera = QTextCharFormat()
+        cabecera.setForeground(tema.qcolor("ink-muted"))
+        cabecera.setFontWeight(600)
+        cal.setHeaderTextFormat(cabecera)
         self.set_fecha(fecha or _dt.date.today())
 
     def fecha(self) -> _dt.date:

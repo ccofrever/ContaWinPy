@@ -148,10 +148,13 @@ def mantener_empresas(parent, sesion: Sesion):
 # PLAN DE CUENTAS
 # ===========================================================================
 class FormCuenta(_Formulario):
-    def __init__(self, parent, sesion: Sesion, codigo: str | None = None):
+    def __init__(self, parent, sesion: Sesion, codigo: str | None = None, propuesta: dict | None = None):
+        """codigo: cuenta a modificar (None = nueva). propuesta: {codigo, nombre} para una cuenta nueva
+        (p. ej. lo que se escribió en un asiento y no existía)."""
         super().__init__(parent, "Cuenta nueva" if codigo is None else "Modificar cuenta")
         self.s, self.nuevo = sesion, codigo is None
-        c = dict(sesion.db.cuenta(sesion.empresa_id, codigo)) if codigo else {}
+        self.cod_guardado = None
+        c = dict(sesion.db.cuenta(sesion.empresa_id, codigo)) if codigo else dict(propuesta or {})
         self.codigo = CodigoCuentaEdit()
         self.codigo.set_codigo(c.get("codigo", ""))
         self.codigo.setReadOnly(not self.nuevo)

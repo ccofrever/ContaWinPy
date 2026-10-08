@@ -162,6 +162,85 @@ def parse_monto(texto) -> int:
         return 0
 
 
+def es_cuenta_resultado(codigo: str | None) -> bool:
+    """Grupos 1 (activo) y 2 (pasivo y patrimonio) son cuentas de balance; cualquier otro grupo
+    (3 y 4 del plan original, 5 «resultado» de otros planes, etc.) es cuenta de resultado: va a
+    Pérdida/Ganancia en el balance y se cierra contra el resultado al abrir el año siguiente."""
+    return (codigo or "")[:1] not in ("1", "2")
+
+
+def orden_linea(linea: dict) -> tuple:
+    """Orden de las líneas de un comprobante: primero las del Debe y luego las del Haber,
+    cada grupo por código de cuenta."""
+    return (0 if int(linea.get("debe") or 0) else 1, linea.get("codigo") or "")
+
+
+def mascara_monto(texto: str) -> str:
+    """Máscara numérica en vivo: deja sólo dígitos (y un «-» inicial) con punto de miles."""
+    neg = texto.strip().startswith("-")
+    digitos = "".join(ch for ch in texto if ch.isdigit())
+    if not digitos:
+        return "-" if neg else ""
+    s = f"{int(digitos):,}".replace(",", ".")
+    return f"-{s}" if neg else s
+
+
+def redondear_pesos(v) -> int:
+    """Redondeo a pesos, mitad hacia arriba (no el redondeo bancario de round())."""
+    from decimal import ROUND_HALF_UP, Decimal
+    return int(Decimal(str(v)).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def fmt_decimal(v, decimales: int = 2) -> str:
+    """1234.5 -> '1.234,50' (formato chileno)."""
+    s = f"{abs(v):,.{decimales}f}".replace(",", "_").replace(".", ",").replace("_", ".")
+    return f"-{s}" if v < 0 else s
+
+
+_RE_MILES = re.compile(r"\d{1,3}(?:\.\d{3})+(?:,\d+)?$")
+
+
+def _numero(token: str) -> str:
+    """Número escrito a la chilena -> número Python: '1.000.000' -> '1000000'; '1,19' -> '1.19';
+    '1.19' (sin grupos de 3) se toma como decimal."""
+    if _RE_MILES.match(token):
+        token = token.replace(".", "")
+    return token.replace(",", ".")
+
+
+def evaluar_expresion(texto: str) -> float:
+    """Evalúa una operación de la calculadora (+ - * / paréntesis y %) sin usar eval().
+    Lanza ValueError con un mensaje para el usuario si la operación no es válida."""
+    import ast
+    import operator as op
+    t = (texto or "").strip().replace("×", "*").replace("÷", "/").replace("−", "-").replace("x", "*")
+    if not t:
+        raise ValueError("Escribe una operación.")
+    if not re.fullmatch(r"[0-9.,+\-*/()% ]+", t):
+        raise ValueError("Sólo se permiten números y + − × ÷ ( ) %.")
+    t = re.sub(r"[0-9][0-9.,]*", lambda m: _numero(m.group(0)), t)
+    t = re.sub(r"%", "/100", t)
+    ops = {ast.Add: op.add, ast.Sub: op.sub, ast.Mult: op.mul, ast.Div: op.truediv,
+           ast.USub: op.neg, ast.UAdd: op.pos}
+
+    def ev(n):
+        if isinstance(n, ast.Expression):
+            return ev(n.body)
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)):
+            return n.value
+        if isinstance(n, ast.BinOp) and type(n.op) in ops:
+            return ops[type(n.op)](ev(n.left), ev(n.right))
+        if isinstance(n, ast.UnaryOp) and type(n.op) in ops:
+            return ops[type(n.op)](ev(n.operand))
+        raise ValueError("Operación incompleta.")
+    try:
+        return float(ev(ast.parse(t, mode="eval")))
+    except ZeroDivisionError:
+        raise ValueError("No se puede dividir por cero.") from None
+    except (SyntaxError, TypeError):
+        raise ValueError("Operación incompleta.") from None
+
+
 # ---------------------------------------------------------------------------
 # Fechas
 # ---------------------------------------------------------------------------
